@@ -2,6 +2,7 @@ package com.nyxn.products_api.service.impl;
 
 import com.nyxn.products_api.dto.ProductRequest;
 import com.nyxn.products_api.dto.ProductResponse;
+import com.nyxn.products_api.exception.InsufficientStockException;
 import com.nyxn.products_api.exception.ResourceNotFoundException;
 import com.nyxn.products_api.mapper.ProductMapper;
 import com.nyxn.products_api.model.Product;
@@ -51,6 +52,18 @@ public class ProductServiceImpl implements ProductService {
     public void delete(Long id) {
         Product product = findProductOrThrow(id);
         productRepository.delete(product);
+    }
+
+    @Override
+    @Transactional
+    public void purchaseStock(Long id, int quantity) {
+        int updatedRows = productRepository.decrementStock(id, quantity);
+        if (updatedRows == 0) {
+            if (!productRepository.existsById(id)) {
+                throw new ResourceNotFoundException("Product", id);
+            }
+            throw new InsufficientStockException(id, quantity);
+        }
     }
 
     private Product findProductOrThrow(Long id) {
