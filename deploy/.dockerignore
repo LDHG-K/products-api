@@ -1,0 +1,21 @@
+# This file lives in deploy/ but is meant to be used with a build context of
+# the repo root (see the docker build command in Section 5.md), so paths below
+# are relative to the repo root, not to deploy/.
+
+.git
+.github
+.gradle
+.idea
+build/
+deploy/
+*.log
+*.md
+HELP.md
+
+# Never send local secrets/env files into the build context.
+.env
+.env.*
+
+# Keep the wrapper jar IN (do not ignore it) — ./gradlew needs it to run
+# inside the build stage.
+!gradle/wrapper/gradle-wrapper.jar

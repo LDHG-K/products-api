@@ -1,0 +1,80 @@
+# NOTA: este archivo vive en deploy/ a propósito y GitHub NO lo va a ejecutar
+# desde aquí. Para activarlo de verdad hay que moverlo/copiarlo a
+# .github/workflows/deploy.yml en la rama correspondiente — GitHub Actions solo
+# reconoce workflows exactamente en esa ruta. Se deja en deploy/ como
+# referencia/diseño, no como pipeline activo.
+
+name: Build, Test and Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+env:
+  PROJECT_ID: your-gcp-project-id
+  REGION: us-central1
+  SERVICE_NAME: products-api
+  AR_REPO: products-api-repo # Artifact Registry repository name
+  IMAGE: us-central1-docker.pkg.dev/your-gcp-project-id/products-api-repo/products-api
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # requerido por Workload Identity Federation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Compile
+        run: ./gradlew compileJava --no-daemon
+
+      - name: Test
+        run: ./gradlew test --no-daemon
+
+      - name: Package (bootJar)
+        run: ./gradlew bootJar -x test --no-daemon # tests already ran above
+
+      # Workload Identity Federation en vez de una llave JSON de service account
+      # de larga duración: el token OIDC que GitHub emite para este run se
+      # intercambia por una credencial de GCP de corta duración (~1h),
+      # restringida por un pool/provider a este repo y a la rama main. No hay
+      # ningún secreto de larga vida almacenado en GitHub que rotar ni que
+      # se pueda filtrar por un log mal configurado o una dependencia
+      # comprometida.
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: products-api-deployer@your-gcp-project-id.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        run: |
+          docker build -f deploy/Dockerfile -t ${{ env.IMAGE }}:${{ github.sha }} .
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          # Los secretos/env vars de producción (credenciales de DB, API keys)
+          # se declaran aquí referenciando Secret Manager, no como valores
+          # planos en este YAML — ver Section 5.md, Punto 5.1.C:
+          # secrets: |
+          #   API_KEY=my-secret:latest
